@@ -13,8 +13,8 @@ from sklearn.preprocessing import MinMaxScaler
 INPUT_CSV = "building59_uganda_augmented.csv"
 
 # Saving models and plots directly to the current directory
-MODEL_SAVE_PATH = "lstm_iaq_model.pth"
-ONNX_SAVE_PATH = "lstm_iaq_model.onnx"
+MODEL_SAVE_PATH = "models/lstm_iaq_model.pth"
+ONNX_SAVE_PATH = "models/lstm_iaq_model.onnx"
 PLOT_SAVE_PATH = "forecast_evaluation.png"
 
 SEQ_LENGTH = 12  # 60 mins lookback (assuming 5-min intervals)
