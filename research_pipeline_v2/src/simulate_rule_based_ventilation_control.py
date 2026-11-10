@@ -32,6 +32,8 @@ REFERENCE_ACH = 0.70
 HIGH_ACH = 1.00
 UPPER_TRIGGER_PPM = 1000.0
 LOWER_RELEASE_PPM = 900.0
+MIN_DWELL_MINUTES = 30
+MIN_DWELL_STEPS = MIN_DWELL_MINUTES // 10
 
 
 def co2_next(
@@ -74,15 +76,34 @@ def run_policy(
 
         active_ach = LOW_ACH
         switches = 0
+        steps_since_switch = MIN_DWELL_STEPS
 
         for index in range(len(initial_series)):
-            if policy == "rule_based_hysteresis":
-                if current >= UPPER_TRIGGER_PPM and active_ach != HIGH_ACH:
+            if policy in {
+                "rule_based_hysteresis",
+                "rule_based_hysteresis_30min_dwell",
+            }:
+                dwell_required = (
+                    MIN_DWELL_STEPS
+                    if policy == "rule_based_hysteresis_30min_dwell"
+                    else 0
+                )
+                if (
+                    current >= UPPER_TRIGGER_PPM
+                    and active_ach != HIGH_ACH
+                    and steps_since_switch >= dwell_required
+                ):
                     active_ach = HIGH_ACH
                     switches += 1
-                elif current <= LOWER_RELEASE_PPM and active_ach != LOW_ACH:
+                    steps_since_switch = 0
+                elif (
+                    current <= LOWER_RELEASE_PPM
+                    and active_ach != LOW_ACH
+                    and steps_since_switch >= dwell_required
+                ):
                     active_ach = LOW_ACH
                     switches += 1
+                    steps_since_switch = 0
                 action = active_ach
             elif policy == "fixed_low":
                 action = LOW_ACH
@@ -94,6 +115,7 @@ def run_policy(
                 raise ValueError(f"Unknown policy: {policy}")
 
             actions[index] = action
+            steps_since_switch += 1
             if index + 1 < len(initial_series):
                 current = co2_next(
                     current, occupants, action, volume, outdoor, generation
@@ -197,6 +219,7 @@ def main() -> None:
             "fixed_reference",
             "fixed_high",
             "rule_based_hysteresis",
+            "rule_based_hysteresis_30min_dwell",
         ]:
             outcome = run_policy(
                 segment_inputs, policy, occupants, volume, outdoor, generation
@@ -224,6 +247,7 @@ def main() -> None:
             "fixed_reference",
             "fixed_high",
             "rule_based_hysteresis",
+            "rule_based_hysteresis_30min_dwell",
         ],
         "control_settings": {
             "low_ach": LOW_ACH,
@@ -232,6 +256,7 @@ def main() -> None:
             "upper_switching_trigger_ppm": UPPER_TRIGGER_PPM,
             "lower_release_trigger_ppm": LOWER_RELEASE_PPM,
             "time_step_minutes": 10,
+            "minimum_dwell_minutes_for_dwell_policy": MIN_DWELL_MINUTES,
         },
         "fixed_physical_assumptions": {
             "room_volume_m3": volume,
@@ -269,6 +294,7 @@ def main() -> None:
             "Temperature, thermal comfort, cooling/heating load and total building energy are not simulated.",
             "No physical HVAC device or embedded edge hardware is controlled.",
             "No validation or held-out test partition is loaded.",
+            "The 30-minute minimum dwell is an illustrative control constraint, not tuned or validated against physical equipment.",
         ],
     }
     with json_path.open("w", encoding="utf-8") as handle:
@@ -296,6 +322,8 @@ def main() -> None:
     print("\nSAVED")
     print(csv_path)
     print(json_path)
+    print("\nThe 30-minute dwell policy is a switching-stability sensitivity test.")
+    print("It is not a validated HVAC equipment setting.")
     print("\nRULE-BASED CONTROL SIMULATION COMPLETE.")
 
 
