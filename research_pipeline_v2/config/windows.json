@@ -1,0 +1,140 @@
+{
+  "project": {
+    "name": "Uganda IAQ Quantum-Inspired Edge AI Research Pipeline",
+    "version": "2.0.0",
+    "random_seed": 42,
+    "timezone": "UTC",
+    "notes": [
+      "This pipeline uses only zone_co2.csv and zone_temp_interior.csv.",
+      "Humidity is intentionally excluded.",
+      "Original Building 59 observations must remain distinguishable from Uganda-context synthetic scenarios.",
+      "No floor plan is available; virtual sensor coordinates are modelling assumptions, not verified physical locations."
+    ]
+  },
+  "paths": {
+    "co2_csv": "data/raw/zone_co2.csv",
+    "temperature_csv": "data/raw/zone_temp_interior.csv",
+    "processed_dir": "outputs/processed",
+    "models_dir": "outputs/models",
+    "metrics_dir": "outputs/metrics",
+    "figures_dir": "outputs/figures",
+    "logs_dir": "outputs/logs"
+  },
+  "data": {
+    "timestamp_column": "date",
+    "resample_frequency": "10min",
+    "resample_aggregation": "median",
+    "merge_method": "inner",
+    "duplicate_timestamp_aggregation": "median",
+    "co2_columns_prefix": "zone_",
+    "co2_columns_suffix": "_co2",
+    "temperature_columns_prefix": "cerc_templogger_",
+    "quality_control": {
+      "co2_min_ppm": 250.0,
+      "co2_max_ppm": 2000.0,
+      "temperature_min_c": 10.0,
+      "temperature_max_c": 40.0,
+      "invalid_values_become_missing": true,
+      "interpolation_limit_steps": 2,
+      "drop_rows_without_both_targets": true,
+      "record_quality_counts": true
+    },
+    "maximum_gap_minutes_for_continuous_windows": 20
+  },
+  "spatial_encoding": {
+    "enabled": true,
+    "layout_type": "deterministic_virtual_grid",
+    "layout_disclaimer": "Sensor coordinates are assumed for a controlled spatial-encoding experiment. They are not measured room coordinates because no floor plan or sensor-location record is available.",
+    "encoding": "sin_cos",
+    "encode_sensor_positions": true,
+    "encode_normalized_sensor_readings": true,
+    "normalize_readings_using_training_partition_only": true,
+    "save_virtual_layout": true
+  },
+  "uganda_scenarios": {
+    "enabled": true,
+    "dataset_label": "synthetic_uganda_context_scenarios",
+    "never_label_as_measured_uganda_data": true,
+    "use_training_partition_as_scenario_seed_only": true,
+    "keep_validation_and_test_partitions_untouched": true,
+    "humidity_enabled": false,
+    "pm25_enabled": false,
+    "pm10_enabled": false,
+    "scenario_types": [
+      "baseline_naturally_ventilated",
+      "high_occupancy",
+      "low_ventilation",
+      "high_occupancy_low_ventilation",
+      "warm_indoor_conditions"
+    ],
+    "co2_model": "well_mixed_room_mass_balance",
+    "assumptions_must_be_saved": true
+  },
+  "split": {
+    "method": "chronological",
+    "train_ratio": 0.70,
+    "validation_ratio": 0.15,
+    "test_ratio": 0.15,
+    "fit_scalers_on_training_only": true,
+    "no_random_row_split": true
+  },
+  "forecasting": {
+    "features": [
+      "co2_ppm",
+      "temperature_c"
+    ],
+    "targets": [
+      "co2_ppm",
+      "temperature_c"
+    ],
+    "sequence_length": 12,
+    "forecast_horizon_steps": 3,
+    "sampling_interval_minutes": 10,
+    "batch_size": 64,
+    "epochs": 20,
+    "early_stopping_patience": 5,
+    "num_workers": 0,
+    "hidden_dimension": 32,
+    "lstm_layers": 1,
+    "dropout": 0.10,
+    "learning_rate": 0.001,
+    "gradient_clip_norm": 1.0
+  },
+  "qpso": {
+    "enabled": true,
+    "particles": 5,
+    "iterations": 5,
+    "fitness_epochs": 3,
+    "validation_only": true,
+    "optimise": [
+      "hidden_dimension",
+      "learning_rate",
+      "dropout"
+    ],
+    "seed": 42
+  },
+  "experiments": {
+    "run_persistence_baseline": true,
+    "run_lstm_without_spatial_encoding": true,
+    "run_lstm_with_spatial_encoding": true,
+    "run_qpso_optimised_spatial_lstm": true,
+    "evaluate_uganda_scenarios_separately": true,
+    "evaluate_held_out_test_once_after_model_selection": true
+  },
+  "edge_benchmark": {
+    "device": "cpu",
+    "warmup_runs": 50,
+    "measured_runs": 500,
+    "report_mean_median_p95_p99_latency": true,
+    "report_throughput": true,
+    "label_as_simulated_local_cpu_benchmark": true
+  },
+  "runtime": {
+    "device_preference": "auto",
+    "allow_cuda_if_available": true,
+    "fallback_to_cpu": true,
+    "deterministic": true,
+    "save_checkpoints": true,
+    "save_run_configuration": true
+  }
+}
