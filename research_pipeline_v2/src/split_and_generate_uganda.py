@@ -103,7 +103,6 @@ def simulate_co2_segment(
         occupants
         * CO2_GENERATION_LITRES_PER_SECOND_PER_PERSON
         * 3.6
-        / 1000.0
     )
 
     generation_term_ppm = (
