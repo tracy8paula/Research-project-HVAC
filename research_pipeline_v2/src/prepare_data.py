@@ -128,8 +128,8 @@ def main() -> None:
     interpolation_limit = int(qc_cfg["interpolation_limit_steps"])
 
     raw_dir = ROOT / "data" / "raw"
-    co2_path = ROOT / paths["co2_csv"].replace("data/raw/", "")
-    temp_path = ROOT / paths["temperature_csv"].replace("data/raw/", "")
+    co2_path = ROOT / paths["co2_csv"]
+    temp_path = ROOT / paths["temperature_csv"]
 
     print("=" * 72)
     print("RESEARCH PIPELINE V2 - TWO-FILE DATA PREPARATION")
