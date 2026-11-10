@@ -169,8 +169,10 @@ def main() -> None:
         assumptions["co2_generation_litres_per_second_per_person_assumed"]
     )
 
-    # Preserve each training segment's original initial CO2 state and length.
-    segment_initials = []
+    # Use each training segment's first CO2 value only as the initial
+    # condition; retain the observed segment length and simulate all later
+    # CO2 values from the mass-balance equation.
+    segment_inputs = []
     for segment_id, segment in train.groupby("segment_id", sort=True):
         segment = segment.sort_values("date")
         timestamps = segment["date"].diff().dropna()
@@ -178,21 +180,13 @@ def main() -> None:
             raise ValueError(
                 f"Training segment {segment_id} contains non-10-minute intervals."
             )
-        segment_initials.append((
-            int(segment_id),
-            np.array([float(segment["co2_ppm"].iloc[0])], dtype=float)
-        ))
-
-    # Simulation duration is inherited from each segment, not its measured
-    # CO2 trajectory. Only the first measured CO2 value initializes the model.
-    segment_inputs = []
-    for (segment_id, _), (_, segment) in zip(
-        enumerate(segment_initials), train.groupby("segment_id", sort=True)
-    ):
-        segment = segment.sort_values("date")
         segment_inputs.append((
-            int(segment_id[1]),
-            np.full(len(segment), float(segment["co2_ppm"].iloc[0]), dtype=float)
+            int(segment_id),
+            np.full(
+                len(segment),
+                float(segment["co2_ppm"].iloc[0]),
+                dtype=float,
+            ),
         ))
 
     results = []
