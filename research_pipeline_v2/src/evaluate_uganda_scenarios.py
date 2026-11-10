@@ -224,13 +224,11 @@ def main() -> None:
         segment_diagnostics = []
         for segment_id, segment in scenario.groupby("segment_id", sort=True):
             segment = segment.sort_values("date")
-            paired = matched_baseline.loc[(int(segment_id), slice(None)), :]
-            paired = paired.reindex(
-                pd.MultiIndex.from_arrays(
-                    [segment["segment_id"].astype(int), segment["date"]],
-                    names=["segment_id", "date"],
-                )
+            segment_index = pd.MultiIndex.from_arrays(
+                [segment["segment_id"].astype(int), segment["date"]],
+                names=["segment_id", "date"],
             )
+            paired = baseline.reindex(segment_index)
             segment_co2_delta = (
                 segment["co2_ppm"].to_numpy()
                 - paired["co2_ppm"].to_numpy()
