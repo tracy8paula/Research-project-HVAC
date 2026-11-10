@@ -1,38 +1,80 @@
 
+import copy
+import json
+import random
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import os
+
 from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import Dataset, DataLoader
 
-# --- CONFIGURATION (FLAT DIRECTORY STRUCTURE) ---
-INPUT_CSV = "building59_uganda_augmented.csv"
 
-# Saving models and plots directly to the current directory
-MODEL_SAVE_PATH = "models/lstm_iaq_model.pth"
-ONNX_SAVE_PATH = "models/lstm_iaq_model.onnx"
-PLOT_SAVE_PATH = "forecast_evaluation.png"
+# ============================================================
+# 1. PROJECT CONFIGURATION
+# ============================================================
 
-SEQ_LENGTH = 12  # 60 mins lookback (assuming 5-min intervals)
-PRED_HORIZON = 3  # 15 mins ahead forecast
-BATCH_SIZE = 64
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+DATA_PATH = PROJECT_ROOT / "building59_uganda_augmented.csv"
+MODEL_DIR = PROJECT_ROOT / "models"
+
+CHECKPOINT_PATH = MODEL_DIR / "lstm_iaq_model.pth"
+ONNX_PATH = MODEL_DIR / "lstm_iaq_model.onnx"
+SCALER_PATH = MODEL_DIR / "scaler.pkl"
+CONFIG_PATH = MODEL_DIR / "model_config.json"
+PLOT_PATH = MODEL_DIR / "forecast_evaluation.png"
+
+# Time-series configuration
+SEQ_LENGTH = 12
+PRED_HORIZON = 3
+
+# LSTM architecture
 HIDDEN_DIM = 64
+NUM_LAYERS = 2
+DROPOUT = 0.2
+
+# Training configuration
+BATCH_SIZE = 64
 EPOCHS = 20
-PATIENCE = 5  # Early stopping patience
+PATIENCE = 5
+LEARNING_RATE = 0.001
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+RANDOM_SEED = 42
 
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+
+# ============================================================
+# 2. REPRODUCIBILITY
+# ============================================================
+
+def set_seed(seed=RANDOM_SEED):
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+# ============================================================
+# 3. DATASET CLASS
+# ============================================================
 
 class BuildingDataset(Dataset):
-    """PyTorch Dataset for Time-Series Windowing."""
 
-    def __init__(self, data: np.ndarray, seq_len: int, pred_horizon: int):
-        # Store the original data instead of creating all sliding windows.
-        # Windows are extracted only when requested by the DataLoader.
+    def __init__(self, data, seq_len, pred_horizon):
+
         self.data = torch.from_numpy(
             np.ascontiguousarray(data)
         ).float()
@@ -40,43 +82,57 @@ class BuildingDataset(Dataset):
         self.seq_len = seq_len
         self.pred_horizon = pred_horizon
 
-        self.length = len(data) - seq_len - pred_horizon + 1
+        self.length = (
+            len(data) - seq_len - pred_horizon + 1
+        )
 
         if self.length <= 0:
             raise ValueError(
-                f"Insufficient data for windowing. "
-                f"Received {len(data)} rows, but need at least "
-                f"{seq_len + pred_horizon} rows."
+                f"Insufficient observations for windowing. "
+                f"Need at least {seq_len + pred_horizon} rows."
             )
 
-    def __len__(self) -> int:
+    def __len__(self):
         return self.length
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, index):
 
-        # Input sequence
-        X = self.data[idx: idx + self.seq_len]
+        X = self.data[
+            index:index + self.seq_len
+        ]
 
-        # Target: CO2 & Temperature (first 2 cols)
-        target_idx = idx + self.seq_len + self.pred_horizon - 1
+        target_index = (
+            index + self.seq_len + self.pred_horizon - 1
+        )
 
-        Y = self.data[target_idx, :2]
+        # First two features are CO2 and temperature.
+        Y = self.data[target_index, :2]
 
         return X, Y
 
 
-class IAQForecastLSTM(nn.Module):
-    """Stacked LSTM Architecture for CO2 & Thermal Forecasting."""
+# ============================================================
+# 4. LSTM MODEL
+# ============================================================
 
-    def __init__(self, input_dim: int, hidden_dim: int):
-        super(IAQForecastLSTM, self).__init__()
+class IAQForecastLSTM(nn.Module):
+
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        dropout=DROPOUT
+    ):
+
+        super().__init__()
 
         self.lstm = nn.LSTM(
-            input_dim,
-            hidden_dim,
-            num_layers=2,
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
             batch_first=True,
-            dropout=0.2
+            dropout=dropout if num_layers > 1 else 0
         )
 
         self.fc = nn.Sequential(
@@ -87,108 +143,130 @@ class IAQForecastLSTM(nn.Module):
 
     def forward(self, x):
 
-        out, _ = self.lstm(x)
+        output, _ = self.lstm(x)
 
-        # Take the output from the last time step
-        return self.fc(out[:, -1, :])
+        last_timestep = output[:, -1, :]
+
+        return self.fc(last_timestep)
 
 
-def load_and_prepare_data(csv_path: str):
-    """Loads CSV, scales train/test separately, and creates DataLoaders."""
+# ============================================================
+# 5. LOAD AND PREPARE DATA
+# ============================================================
 
-    print(f"Loading dataset from {csv_path}...", flush=True)
+def load_and_prepare_data():
 
-    # Resolve CSV location
-    if not os.path.exists(csv_path):
+    print("=" * 65)
+    print("LOADING IAQ DATASET")
+    print("=" * 65)
 
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-
-        possible_path = os.path.join(current_dir, csv_path)
-        parent_path = os.path.join(current_dir, "..", csv_path)
-
-        if os.path.exists(possible_path):
-            csv_path = possible_path
-
-        elif os.path.exists(parent_path):
-            csv_path = parent_path
-
-        else:
-            raise FileNotFoundError(
-                f"Missing {csv_path}. "
-                "Make sure the CSV is in the same folder."
-            )
-
-    # Load dataset
-    df = pd.read_csv(csv_path)
-
-    # Required forecasting variables
-    required_features = ['co2', 'temperature']
-
-    missing_features = [
-        f for f in required_features if f not in df.columns
-    ]
-
-    if missing_features:
-        raise ValueError(
-            f"Missing required CSV columns: {missing_features}"
+    if not DATA_PATH.is_file():
+        raise FileNotFoundError(
+            f"Dataset not found: {DATA_PATH}"
         )
 
-    # Preserve original feature names and order.
-    # Humidity remains an optional input feature.
-    features = ['co2', 'temperature', 'humidity']
-
-    features = [f for f in features if f in df.columns]
-
-    # Convert selected features to numeric values
-    df[features] = df[features].apply(
-        pd.to_numeric, errors='coerce'
+    df = pd.read_csv(
+        DATA_PATH,
+        low_memory=False
     )
 
-    # Remove missing and invalid observations
-    df = df.dropna(subset=features)
+    df.columns = df.columns.str.strip().str.lower()
 
-    df = df[
-        np.isfinite(df[features].values).all(axis=1)
+    required_features = [
+        "co2",
+        "temperature"
     ]
 
-    raw_data = df[features].values.astype(np.float32)
+    missing = [
+        column
+        for column in required_features
+        if column not in df.columns
+    ]
 
-    # Check dataset size
-    minimum_rows = SEQ_LENGTH + PRED_HORIZON
-
-    if len(raw_data) < minimum_rows * 2:
+    if missing:
         raise ValueError(
-            f"Insufficient observations: {len(raw_data)} rows. "
-            f"At least {minimum_rows * 2} are needed for "
-            "the training and testing datasets."
+            f"Required dataset columns are missing: {missing}"
         )
 
-    print(f"Valid observations: {len(raw_data)}")
-    print(f"Input features: {features}")
+    # Preserve the exact feature order used by the model.
+    feature_columns = [
+        "co2",
+        "temperature"
+    ]
 
-    # Chronological Train/Test Split (80/20)
-    # Split BEFORE scaling to prevent data leakage.
-    split = int(len(raw_data) * 0.8)
+    # Humidity is included when available.
+    if "humidity" in df.columns:
+        feature_columns.append("humidity")
 
-    train_raw = raw_data[:split]
-    test_raw = raw_data[split:]
+    print("Dataset:", DATA_PATH)
+    print("Available rows:", len(df))
+    print("Input features:", feature_columns)
 
-    # Fit scaler ONLY on training data
+    # Convert selected features to numeric.
+    df[feature_columns] = df[
+        feature_columns
+    ].apply(
+        pd.to_numeric,
+        errors="coerce"
+    )
+
+    # Remove missing and infinite observations.
+    df = df.replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
+    df = df.dropna(
+        subset=feature_columns
+    )
+
+    raw_data = df[
+        feature_columns
+    ].to_numpy(
+        dtype=np.float32
+    )
+
+    minimum_rows = (
+        SEQ_LENGTH + PRED_HORIZON
+    ) * 2
+
+    if len(raw_data) < minimum_rows:
+        raise ValueError(
+            f"Only {len(raw_data)} valid rows remain. "
+            f"At least {minimum_rows} are required."
+        )
+
+    # Chronological 80/20 split.
+    split_index = int(
+        len(raw_data) * 0.8
+    )
+
+    train_raw = raw_data[:split_index]
+    test_raw = raw_data[split_index:]
+
+    # Fit scaler ONLY on training data.
     scaler = MinMaxScaler()
 
-    train_scaled = scaler.fit_transform(train_raw)
-    test_scaled = scaler.transform(test_raw)
+    train_scaled = scaler.fit_transform(
+        train_raw
+    ).astype(np.float32)
 
-    # Create datasets
+    test_scaled = scaler.transform(
+        test_raw
+    ).astype(np.float32)
+
     train_dataset = BuildingDataset(
-        train_scaled, SEQ_LENGTH, PRED_HORIZON
+        train_scaled,
+        SEQ_LENGTH,
+        PRED_HORIZON
     )
 
     test_dataset = BuildingDataset(
-        test_scaled, SEQ_LENGTH, PRED_HORIZON
+        test_scaled,
+        SEQ_LENGTH,
+        PRED_HORIZON
     )
 
-    # Create DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
@@ -203,341 +281,632 @@ def load_and_prepare_data(csv_path: str):
         num_workers=0
     )
 
-    print(f"Training windows: {len(train_dataset)}")
-    print(f"Testing windows: {len(test_dataset)}")
+    print("Valid observations:", len(raw_data))
+    print("Training observations:", len(train_raw))
+    print("Testing observations:", len(test_raw))
+    print("Training windows:", len(train_dataset))
+    print("Testing windows:", len(test_dataset))
+    print("Input dimension:", len(feature_columns))
 
-    return train_loader, test_loader, len(features), scaler
-
-
-def train_and_export():
-    """Main training loop with early stopping, schedulers, and ONNX export."""
-
-    train_loader, test_loader, input_dim, scaler = (
-        load_and_prepare_data(INPUT_CSV)
+    return (
+        train_loader,
+        test_loader,
+        scaler,
+        feature_columns,
+        len(raw_data),
+        split_index
     )
 
+
+# ============================================================
+# 6. TRAINING
+# ============================================================
+
+def train_model(train_loader, test_loader, input_dim):
+
     model = IAQForecastLSTM(
-        input_dim, HIDDEN_DIM
+        input_dim=input_dim
     ).to(DEVICE)
 
     criterion = nn.MSELoss()
 
     optimizer = optim.Adam(
         model.parameters(),
-        lr=0.001
+        lr=LEARNING_RATE
     )
 
-    # Removed deprecated verbose parameter
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        mode='min',
+        mode="min",
         factor=0.5,
         patience=2
     )
 
-    print(
-        f"\n--- Starting LSTM Training on {DEVICE} ---",
-        flush=True
-    )
+    best_loss = float("inf")
+    best_state = None
+    epochs_without_improvement = 0
 
-    best_loss = float('inf')
-    epochs_no_improve = 0
+    print("\n" + "=" * 65)
+    print("STARTING LSTM TRAINING")
+    print("=" * 65)
 
-    # Training loop
+    print("Device:", DEVICE)
+
     for epoch in range(1, EPOCHS + 1):
+
+        # ----------------------------
+        # Training phase
+        # ----------------------------
 
         model.train()
 
         train_loss = 0.0
 
-        total_batches = len(train_loader)
+        for X, Y in train_loader:
 
-        # Display approximately 10 progress updates per epoch
-        progress_interval = max(1, total_batches // 10)
+            X = X.to(DEVICE)
+            Y = Y.to(DEVICE)
 
-        for batch_index, (bx, by) in enumerate(
-            train_loader, start=1
-        ):
+            optimizer.zero_grad(
+                set_to_none=True
+            )
 
-            bx = bx.to(DEVICE)
-            by = by.to(DEVICE)
+            predictions = model(X)
 
-            # Reset gradients
-            optimizer.zero_grad(set_to_none=True)
+            loss = criterion(
+                predictions,
+                Y
+            )
 
-            # Forward pass
-            predictions = model(bx)
-
-            loss = criterion(predictions, by)
-
-            # Backward pass
             loss.backward()
 
-            # Gradient clipping to prevent exploding gradients
             torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
                 max_norm=1.0
             )
 
-            # Update model parameters
             optimizer.step()
 
-            train_loss += loss.item() * bx.size(0)
+            train_loss += (
+                loss.item() * X.size(0)
+            )
 
-            # Training progress
-            if (
-                batch_index % progress_interval == 0
-                or batch_index == total_batches
-            ):
-                print(
-                    f"Epoch {epoch:02d}/{EPOCHS} | "
-                    f"Batch {batch_index}/{total_batches}",
-                    flush=True
-                )
+        train_loss /= len(
+            train_loader.dataset
+        )
 
-        # Evaluation
+        # ----------------------------
+        # Validation phase
+        # ----------------------------
+
         model.eval()
 
-        val_loss = 0.0
+        validation_loss = 0.0
 
         with torch.no_grad():
 
-            for bx, by in test_loader:
+            for X, Y in test_loader:
 
-                bx = bx.to(DEVICE)
-                by = by.to(DEVICE)
+                X = X.to(DEVICE)
+                Y = Y.to(DEVICE)
 
-                predictions = model(bx)
+                predictions = model(X)
 
-                loss = criterion(predictions, by)
+                loss = criterion(
+                    predictions,
+                    Y
+                )
 
-                val_loss += loss.item() * bx.size(0)
+                validation_loss += (
+                    loss.item() * X.size(0)
+                )
 
-        # Calculate average losses
-        train_loss /= len(train_loader.dataset)
+        validation_loss /= len(
+            test_loader.dataset
+        )
 
-        val_loss /= len(test_loader.dataset)
+        scheduler.step(validation_loss)
 
-        # Update learning rate scheduler
-        scheduler.step(val_loss)
-
-        current_lr = scheduler.get_last_lr()[0]
+        current_lr = (
+            optimizer.param_groups[0]["lr"]
+        )
 
         print(
-            f"Epoch [{epoch:02d}/{EPOCHS}] | "
-            f"Train Loss: {train_loss:.5f} | "
-            f"Val Loss: {val_loss:.5f} | "
+            f"Epoch {epoch:02d}/{EPOCHS} | "
+            f"Train Loss: {train_loss:.6f} | "
+            f"Validation Loss: {validation_loss:.6f} | "
             f"Learning Rate: {current_lr:.7f}",
             flush=True
         )
 
-        # Early Stopping & Model Saving Check
-        if val_loss < best_loss:
+        # ----------------------------
+        # Save best model in memory
+        # ----------------------------
 
-            best_loss = val_loss
+        if validation_loss < best_loss:
 
-            epochs_no_improve = 0
+            best_loss = validation_loss
 
-            torch.save(
-                model.state_dict(),
-                MODEL_SAVE_PATH
+            best_state = copy.deepcopy(
+                model.state_dict()
             )
 
-            print(
-                f"Best model saved. Validation Loss: {best_loss:.5f}",
-                flush=True
-            )
+            epochs_without_improvement = 0
+
+            print("Best model updated.")
 
         else:
 
-            epochs_no_improve += 1
+            epochs_without_improvement += 1
 
-            if epochs_no_improve >= PATIENCE:
+            if epochs_without_improvement >= PATIENCE:
 
                 print(
-                    f"Early stopping triggered at epoch {epoch}. "
-                    "Restoring best weights.",
-                    flush=True
+                    "Early stopping triggered."
                 )
 
                 break
 
-    # Evaluation
-    print("\n--- Evaluating Best Model ---", flush=True)
-
-    if not os.path.exists(MODEL_SAVE_PATH):
-        raise FileNotFoundError(
-            "No trained model checkpoint was saved."
+    if best_state is None:
+        raise RuntimeError(
+            "Training failed to produce a valid model."
         )
 
-    model.load_state_dict(
-        torch.load(
-            MODEL_SAVE_PATH,
-            map_location=DEVICE
-        )
-    )
+    # Restore the best model.
+    model.load_state_dict(best_state)
 
     model.eval()
 
-    preds_list = []
+    print("\nBest validation loss:", best_loss)
+
+    return model, best_loss
+
+
+# ============================================================
+# 7. SAVE TRAINED MODEL
+# ============================================================
+
+def save_checkpoint(model):
+
+    MODEL_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    torch.save(
+        model.state_dict(),
+        CHECKPOINT_PATH
+    )
+
+    print("\nPyTorch checkpoint saved:")
+    print(CHECKPOINT_PATH)
+
+
+# ============================================================
+# 8. SAVE SCALER
+# ============================================================
+
+def save_scaler(scaler):
+
+    joblib.dump(
+        scaler,
+        SCALER_PATH
+    )
+
+    print("\nFitted scaler saved:")
+    print(SCALER_PATH)
+
+
+# ============================================================
+# 9. EXPORT ONNX MODEL
+# ============================================================
+
+def export_onnx(model, input_dim):
+
+    print("\n" + "=" * 65)
+    print("EXPORTING ONNX MODEL")
+    print("=" * 65)
+
+    model = model.to("cpu")
+    model.eval()
+
+    dummy_input = torch.randn(
+        1,
+        SEQ_LENGTH,
+        input_dim,
+        dtype=torch.float32
+    )
+
+    torch.onnx.export(
+        model,
+        dummy_input,
+        str(ONNX_PATH),
+        input_names=["input_sequence"],
+        output_names=["forecast_output"],
+        dynamic_axes={
+            "input_sequence": {
+                0: "batch_size"
+            },
+            "forecast_output": {
+                0: "batch_size"
+            }
+        },
+        opset_version=17,
+        dynamo=False
+    )
+
+    if not ONNX_PATH.is_file():
+        raise RuntimeError(
+            "ONNX export did not produce the expected file."
+        )
+
+    print("ONNX model exported:")
+    print(ONNX_PATH)
+
+    print("Input name: input_sequence")
+    print("Output name: forecast_output")
+    print(
+        "Input shape:",
+        [1, SEQ_LENGTH, input_dim]
+    )
+    print("Output shape:", [1, 2])
+
+
+# ============================================================
+# 10. GENERATE MODEL CONFIGURATION
+# ============================================================
+
+def save_model_config(
+    feature_columns,
+    total_rows,
+    split_index,
+    best_loss
+):
+
+    config = {
+
+        "model_name": "IAQForecastLSTM",
+
+        "model_format": "ONNX",
+
+        "model_file": "models/lstm_iaq_model.onnx",
+
+        "checkpoint_file": "models/lstm_iaq_model.pth",
+
+        "scaler_file": "models/scaler.pkl",
+
+        "sequence_length": SEQ_LENGTH,
+
+        "forecast_horizon": PRED_HORIZON,
+
+        "feature_columns": feature_columns,
+
+        "target_columns": [
+            "co2",
+            "temperature"
+        ],
+
+        "input_dimension": len(feature_columns),
+
+        "output_dimension": 2,
+
+        "input_name": "input_sequence",
+
+        "output_name": "forecast_output",
+
+        "architecture": {
+
+            "type": "LSTM",
+
+            "hidden_dimension": HIDDEN_DIM,
+
+            "num_layers": NUM_LAYERS,
+
+            "dropout": DROPOUT,
+
+            "batch_first": True
+
+        },
+
+        "preprocessing": {
+
+            "scaler": "MinMaxScaler",
+
+            "scaler_file": "models/scaler.pkl",
+
+            "scaler_fitted_on": "training_data_only",
+
+            "feature_order": feature_columns,
+
+            "train_test_split": 0.8,
+
+            "split_method": "chronological"
+
+        },
+
+        "training": {
+
+            "epochs_requested": EPOCHS,
+
+            "batch_size": BATCH_SIZE,
+
+            "learning_rate": LEARNING_RATE,
+
+            "early_stopping_patience": PATIENCE,
+
+            "random_seed": RANDOM_SEED,
+
+            "best_validation_loss": float(best_loss)
+
+        },
+
+        "dataset": {
+
+            "file": "building59_uganda_augmented.csv",
+
+            "valid_rows": int(total_rows),
+
+            "training_split_index": int(split_index)
+
+        }
+
+    }
+
+    with open(
+        CONFIG_PATH,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            config,
+            file,
+            indent=4
+        )
+
+    print("\nModel configuration saved:")
+    print(CONFIG_PATH)
+
+
+# ============================================================
+# 11. EVALUATION
+# ============================================================
+
+def evaluate_model(
+    model,
+    test_loader,
+    scaler,
+    input_dim
+):
+
+    model.eval()
+
+    predictions_list = []
     actuals_list = []
 
     with torch.no_grad():
 
-        for bx, by in test_loader:
+        for X, Y in test_loader:
 
             predictions = model(
-                bx.to(DEVICE)
+                X.to("cpu")
             )
 
-            preds_list.append(
-                predictions.cpu().numpy()
+            predictions_list.append(
+                predictions.numpy()
             )
 
             actuals_list.append(
-                by.numpy()
+                Y.numpy()
             )
 
-    preds = np.vstack(preds_list)
-    actuals = np.vstack(actuals_list)
+    predictions = np.vstack(
+        predictions_list
+    )
 
-    # Denormalize predictions
-    dummy_preds = np.zeros(
-        (len(preds), input_dim)
+    actuals = np.vstack(
+        actuals_list
+    )
+
+    # Restore original measurement units.
+    dummy_predictions = np.zeros(
+        (len(predictions), input_dim),
+        dtype=np.float32
     )
 
     dummy_actuals = np.zeros(
-        (len(actuals), input_dim)
+        (len(actuals), input_dim),
+        dtype=np.float32
     )
 
-    dummy_preds[:, :2] = preds
+    dummy_predictions[:, :2] = predictions
     dummy_actuals[:, :2] = actuals
 
-    preds_real = scaler.inverse_transform(
-        dummy_preds
+    predictions_real = scaler.inverse_transform(
+        dummy_predictions
     )[:, :2]
 
     actuals_real = scaler.inverse_transform(
         dummy_actuals
     )[:, :2]
 
-    # Calculate forecasting errors
-    mae_co2 = float(
-        np.mean(
-            np.abs(
-                preds_real[:, 0] - actuals_real[:, 0]
-            )
+    mae_co2 = np.mean(
+        np.abs(
+            predictions_real[:, 0]
+            - actuals_real[:, 0]
         )
     )
 
-    mae_temp = float(
-        np.mean(
-            np.abs(
-                preds_real[:, 1] - actuals_real[:, 1]
-            )
+    mae_temperature = np.mean(
+        np.abs(
+            predictions_real[:, 1]
+            - actuals_real[:, 1]
         )
+    )
+
+    print("\n" + "=" * 65)
+    print("MODEL EVALUATION")
+    print("=" * 65)
+
+    print(
+        f"CO2 MAE: {mae_co2:.4f} ppm"
     )
 
     print(
-        f"15-Min Forecast CO2 MAE: {mae_co2:.2f} ppm"
+        f"Temperature MAE: {mae_temperature:.4f} °C"
     )
 
-    print(
-        f"15-Min Forecast Temp MAE: {mae_temp:.2f} °C"
+    # Evaluation plot.
+    plot_length = min(
+        200,
+        len(actuals_real)
     )
 
-    # Plot evaluation results
-    try:
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(10, 8)
+    )
 
-        fig, ax = plt.subplots(
-            2, 1, figsize=(10, 8)
-        )
+    axes[0].plot(
+        actuals_real[:plot_length, 0],
+        label="Actual CO2"
+    )
 
-        plot_length = min(200, len(actuals_real))
+    axes[0].plot(
+        predictions_real[:plot_length, 0],
+        label="Predicted CO2",
+        linestyle="--"
+    )
 
-        ax[0].plot(
-            actuals_real[:plot_length, 0],
-            label="Actual CO2",
-            color="navy"
-        )
+    axes[0].set_ylabel("CO2 (ppm)")
+    axes[0].legend()
+    axes[0].grid(True)
 
-        ax[0].plot(
-            preds_real[:plot_length, 0],
-            label="Predicted CO2",
-            color="red",
-            linestyle="--"
-        )
+    axes[1].plot(
+        actuals_real[:plot_length, 1],
+        label="Actual Temperature"
+    )
 
-        ax[0].legend()
-        ax[0].set_ylabel("CO2 (ppm)")
-        ax[0].grid(True)
+    axes[1].plot(
+        predictions_real[:plot_length, 1],
+        label="Predicted Temperature",
+        linestyle="--"
+    )
 
-        ax[1].plot(
-            actuals_real[:plot_length, 1],
-            label="Actual Temp",
-            color="green"
-        )
+    axes[1].set_ylabel("Temperature (°C)")
+    axes[1].legend()
+    axes[1].grid(True)
 
-        ax[1].plot(
-            preds_real[:plot_length, 1],
-            label="Predicted Temp",
-            color="orange",
-            linestyle="--"
-        )
+    plt.tight_layout()
 
-        ax[1].legend()
-        ax[1].set_ylabel("Temperature (°C)")
-        ax[1].grid(True)
+    plt.savefig(
+        PLOT_PATH,
+        dpi=150
+    )
 
-        plt.tight_layout()
+    plt.close(fig)
 
-        plt.savefig(PLOT_SAVE_PATH)
+    print("\nEvaluation plot saved:")
+    print(PLOT_PATH)
 
-        plt.close(fig)
+    return {
+        "co2_mae": float(mae_co2),
+        "temperature_mae": float(mae_temperature)
+    }
+
+
+# ============================================================
+# 12. MAIN PIPELINE
+# ============================================================
+
+def main():
+
+    set_seed()
+
+    MODEL_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    (
+        train_loader,
+        test_loader,
+        scaler,
+        feature_columns,
+        total_rows,
+        split_index
+    ) = load_and_prepare_data()
+
+    input_dim = len(
+        feature_columns
+    )
+
+    model, best_loss = train_model(
+        train_loader,
+        test_loader,
+        input_dim
+    )
+
+    # Save all artifacts from the same training run.
+    save_checkpoint(model)
+
+    save_scaler(scaler)
+
+    export_onnx(
+        model,
+        input_dim
+    )
+
+    evaluation_results = evaluate_model(
+        model,
+        test_loader,
+        scaler,
+        input_dim
+    )
+
+    save_model_config(
+        feature_columns,
+        total_rows,
+        split_index,
+        best_loss
+    )
+
+    # --------------------------------------------------------
+    # FINAL ARTIFACT CHECK
+    # --------------------------------------------------------
+
+    required_artifacts = [
+        CHECKPOINT_PATH,
+        ONNX_PATH,
+        SCALER_PATH,
+        CONFIG_PATH,
+        PLOT_PATH
+    ]
+
+    print("\n" + "=" * 65)
+    print("FINAL ARTIFACT VERIFICATION")
+    print("=" * 65)
+
+    for artifact in required_artifacts:
+
+        if not artifact.is_file():
+
+            raise FileNotFoundError(
+                f"Expected artifact was not created: {artifact}"
+            )
 
         print(
-            f"Evaluation plot saved to '{PLOT_SAVE_PATH}'"
+            f"[OK] {artifact.relative_to(PROJECT_ROOT)}"
         )
 
-    except Exception as e:
+    print("\nEvaluation summary:")
 
-        print(f"Plotting failed: {e}")
+    for key, value in evaluation_results.items():
+        print(f"{key}: {value:.4f}")
 
-    # Export to ONNX with dynamic batch sizing
-    print("\n--- Exporting ONNX Model ---", flush=True)
-
-    try:
-
-        dummy_input = torch.randn(
-            1, SEQ_LENGTH, input_dim
-        ).to(DEVICE)
-
-        torch.onnx.export(
-            model,
-            dummy_input,
-            ONNX_SAVE_PATH,
-            input_names=['input_sequence'],
-            output_names=['forecast_output'],
-            dynamic_axes={
-                'input_sequence': {0: 'batch_size'},
-                'forecast_output': {0: 'batch_size'}
-            }
-        )
-
-        print(
-            f"ONNX Model saved to {ONNX_SAVE_PATH} "
-            "(Ready for INT8 Edge Quantization)"
-        )
-
-    except Exception as e:
-
-        print(
-            f"ONNX export failed: {e}\n"
-            "The trained PyTorch model is still saved."
-        )
-
-    print("\n--- LSTM TRAINING PIPELINE COMPLETED ---")
+    print("\nLSTM TRAINING PIPELINE COMPLETED SUCCESSFULLY.")
 
 
 if __name__ == "__main__":
-    train_and_export()
+    main()

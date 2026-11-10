@@ -109,7 +109,7 @@ def load_input_sequences(
     # The scaler must have been fitted on the same
     # feature columns in the same order.
     scaled_data = scaler.transform(
-        data[feature_columns]
+        data[feature_columns].to_numpy(dtype=np.float32)
     )
 
     scaled_data = np.asarray(
