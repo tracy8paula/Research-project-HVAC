@@ -216,9 +216,12 @@ def calculate_metrics(
             "mae": float(np.mean(np.abs(error))),
             "rmse": float(np.sqrt(np.mean(error ** 2))),
         }
-    result["macro_average_mae"] = float(
-        np.mean([result[name]["mae"] for name in TARGETS])
-    )
+    # Dimensionless validation objective: calculate MAE in the training-fitted
+    # scaled target space, then average the two equally weighted targets.
+    scaled_errors = np.abs(prediction_scaled - truth_scaled)
+    result["normalized_macro_mae"] = float(np.mean([
+        np.mean(scaled_errors[:, :, index]) for index in range(len(TARGETS))
+    ]))
     return result
 
 
@@ -323,11 +326,11 @@ def train_one_model(
         validation_metrics = calculate_metrics(
             validation_prediction, validation_truth, target_scaler
         )
-        validation_loss = validation_metrics["macro_average_mae"]
+        validation_loss = validation_metrics["normalized_macro_mae"]
         epoch_record = {
             "epoch": epoch,
             "training_mse_scaled": float(np.mean(training_losses)),
-            "validation_macro_mae_original_units": validation_loss,
+            "validation_normalized_macro_mae": validation_loss,
             "validation_co2_mae_ppm": validation_metrics["co2_ppm"]["mae"],
             "validation_temperature_mae_c": validation_metrics["temperature_c"]["mae"],
         }
@@ -366,12 +369,12 @@ def train_one_model(
         "sequence_length": int(forecast_cfg["sequence_length"]),
         "forecast_horizon_steps": int(forecast_cfg["forecast_horizon_steps"]),
         "target_order": TARGETS,
-        "selected_by": "validation_macro_average_MAE",
+        "selected_by": "validation_normalized_macro_MAE_scaled_targets",
     }, model_path)
 
     return {
         "validation_metrics": metrics,
-        "best_validation_macro_mae": best_validation,
+        "best_validation_normalized_macro_mae": best_validation,
         "checkpoint": str(model_path),
         "epochs_completed": len(history),
     }, history
@@ -507,8 +510,8 @@ def main() -> None:
         "lstm_with_spatial": spatial_result,
         "selected_candidate": min(
             [
-                ("lstm_without_spatial", nonspatial_result["best_validation_macro_mae"]),
-                ("lstm_with_spatial", spatial_result["best_validation_macro_mae"]),
+                ("lstm_without_spatial", nonspatial_result["best_validation_normalized_macro_mae"]),
+                ("lstm_with_spatial", spatial_result["best_validation_normalized_macro_mae"]),
             ],
             key=lambda item: item[1],
         )[0],
@@ -542,14 +545,14 @@ def main() -> None:
         json.dump(scaler_export, handle, indent=2)
 
     print("\nVALIDATION MODEL COMPARISON")
-    print("Persistence MAE:", persistence_metrics["macro_average_mae"])
+    print("Persistence MAE:", persistence_metrics["normalized_macro_mae"])
     print(
         "LSTM without spatial MAE:",
-        nonspatial_result["validation_metrics"]["macro_average_mae"]
+        nonspatial_result["validation_metrics"]["normalized_macro_mae"]
     )
     print(
         "LSTM with spatial MAE:",
-        spatial_result["validation_metrics"]["macro_average_mae"]
+        spatial_result["validation_metrics"]["normalized_macro_mae"]
     )
     print("\nSelected baseline candidate:", summary["selected_candidate"])
     print("\nSaved model checkpoints:", MODELS)
