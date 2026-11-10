@@ -49,7 +49,7 @@ def read_csv(path: Path, parse_dates: bool = True) -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=["date"] if parse_dates else None)
 
 
-def check_partition(\n    name: str, frame: pd.DataFrame, interval: int,\n    sequence_length: int, horizon: int,\n) -> dict:
+def check_partition(name: str, frame: pd.DataFrame, interval: int, sequence_length: int, horizon: int) -> dict:
     required = {"date", "co2_ppm", "temperature_c", "segment_id"}
     missing = required.difference(frame.columns)
     if missing:
