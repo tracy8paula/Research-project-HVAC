@@ -70,12 +70,13 @@ def metric_from_scaled(
     truth_scaled: np.ndarray,
     target_scaler: dict,
 ) -> float:
-    prediction = inverse_minmax(prediction_scaled, target_scaler)
-    truth = inverse_minmax(truth_scaled, target_scaler)
-    errors = []
-    for i in range(len(TARGETS)):
-        errors.append(float(np.mean(np.abs(prediction[:, :, i] - truth[:, :, i]))))
-    return float(np.mean(errors))
+    """Equal-weight, dimensionless MAE in training-scaled target space."""
+    errors = np.abs(prediction_scaled - truth_scaled)
+    per_target_mae = [
+        float(np.mean(errors[:, :, index]))
+        for index in range(len(TARGETS))
+    ]
+    return float(np.mean(per_target_mae))
 
 
 def make_model(input_size, params, config, device):
@@ -215,14 +216,14 @@ def qpso_search(
                 f"hidden={params['hidden_dimension']}, "
                 f"lr={params['learning_rate']:.6f}, "
                 f"dropout={params['dropout']:.3f}, "
-                f"validation MAE={score:.5f}"
+                f"validation normalized MAE={score:.5f}"
             )
 
             history.append({
                 "iteration": iteration + 1,
                 "particle": particle_index + 1,
                 **params,
-                "validation_macro_mae": score,
+                "validation_normalized_macro_mae": score,
                 "global_best_after_evaluation": global_score,
             })
 
@@ -345,7 +346,7 @@ def main() -> None:
         "sequence_length": sequence_length,
         "forecast_horizon_steps": horizon,
         "target_order": TARGETS,
-        "selected_by": "QPSO_validation_macro_average_MAE",
+        "selected_by": "QPSO_validation_normalized_macro_MAE_scaled_targets",
         "held_out_test_used": False,
     }, checkpoint_path)
 
@@ -364,8 +365,8 @@ def main() -> None:
         "iterations": int(config["qpso"]["iterations"]),
         "fitness_epochs_per_particle": int(config["qpso"]["fitness_epochs"]),
         "selected_hyperparameters": best_params,
-        "best_particle_search_validation_mae": best_fitness,
-        "full_training_refit_validation_mae": best_score,
+        "best_particle_search_validation_normalized_mae": best_fitness,
+        "full_training_refit_validation_normalized_mae": best_score,
         "checkpoint": str(checkpoint_path),
         "search_history": str(METRICS / "qpso_search_history.csv"),
     }
@@ -376,8 +377,8 @@ def main() -> None:
 
     print("\nQPSO SELECTED HYPERPARAMETERS")
     print(json.dumps(best_params, indent=2))
-    print("Best particle fitness MAE:", best_fitness)
-    print("Full-refit validation MAE:", best_score)
+    print("Best particle normalized validation MAE:", best_fitness)
+    print("Full-refit normalized validation MAE:", best_score)
     print("\nSaved:", checkpoint_path)
     print("Saved:", METRICS / "qpso_optimisation_results.json")
     print("Saved:", METRICS / "qpso_search_history.csv")
