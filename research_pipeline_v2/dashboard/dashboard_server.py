@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
-import math
+import bisect
 import sys
 import threading
 from collections import deque
@@ -68,23 +68,26 @@ class ReplayEngine:
         self.last_prediction = None
         self.source_label = "Recorded Building 59 observations — accelerated replay"
         self.scenario = "baseline_naturally_ventilated"
+        self._snapshot()
 
     def _valid_segment_starts(self):
+        # Vectorised continuity check: avoid repeatedly slicing a DataFrame
+        # for every candidate window on startup.
         starts = []
+        total = self.sequence + self.horizon
+        expected = np.timedelta64(self.interval, "m")
         for _, group in self.frame.groupby("segment_id", sort=False):
-            ids = group.index.to_list()
-            for p in ids:
-                if p + self.sequence + self.horizon - 1 >= len(self.frame):
-                    break
-                window = self.frame.iloc[p:p + self.sequence + self.horizon]
-                if len(window) != self.sequence + self.horizon:
-                    continue
-                if window["segment_id"].nunique() != 1:
-                    continue
-                delta = pd.to_datetime(window["date"]).diff().dropna()
-                if (delta == pd.Timedelta(minutes=self.interval)).all():
-                    starts.append(p + self.sequence - 1)
-        return starts
+            positions = group.index.to_numpy()
+            dates = pd.to_datetime(group["date"]).to_numpy(dtype="datetime64[ns]")
+            if len(positions) < total:
+                continue
+            valid_delta = np.diff(dates) == expected
+            window_ok = np.convolve(valid_delta.astype(np.int8),
+                                    np.ones(total - 1, dtype=np.int8),
+                                    mode="valid") == total - 1
+            local_starts = np.flatnonzero(window_ok)
+            starts.extend((positions[local_starts] + self.sequence - 1).tolist())
+        return sorted(starts)
 
     def _predict(self, index):
         start = index - self.sequence + 1
@@ -174,21 +177,21 @@ class ReplayEngine:
     def step(self, amount=1):
         with self.lock:
             for _ in range(max(1, min(int(amount), 20))):
-                candidates = [x for x in self.starts if x > self.position]
-                if not candidates:
-                    self.position = self.starts[0] + self.sequence - 1
+                next_index = bisect.bisect_right(self.starts, self.position)
+                if next_index >= len(self.starts):
+                    self.position = self.starts[0]
                     self.pending.clear()
                     self.errors = {"co2": [], "temperature": []}
                     self.forecast_log.clear()
                 else:
-                    self.position = candidates[0]
+                    self.position = self.starts[next_index]
                 self._record_arrived_truth(self.position)
                 self._snapshot()
             return self._payload()
 
     def reset(self):
         with self.lock:
-            self.position = self.starts[0] + self.sequence - 1
+            self.position = self.starts[0]
             self.pending.clear()
             self.errors = {"co2": [], "temperature": []}
             self.forecast_log.clear()
@@ -207,7 +210,13 @@ class ReplayEngine:
             "benchmark": read_csv("final_held_out_test_comparison.csv"),
             "scenarios": read_csv("uganda_scenario_summary.csv"),
             "control": read_csv("uganda_rule_based_control_summary.csv"),
-            "scenario_audit": read_json("uganda_sensitivity_analysis.json"),
+            "qpso_search": read_csv("qpso_search_history.csv"),
+            "factorial": read_csv("uganda_occupancy_ventilation_factorial.csv"),
+            "assumption_sensitivity": read_csv("uganda_assumption_sensitivity.csv"),
+            "temperature_sensitivity": read_csv("uganda_temperature_offset_sensitivity.csv"),
+            "sensitivity": read_json("uganda_sensitivity_analysis.json"),
+            "interaction": read_json("uganda_occupancy_ventilation_interaction.json"),
+            "integrity": read_json("data_integrity_audit.json"),
             "control_note": "Offline rule-based simulation. Fan-energy is a dimensionless proxy, not measured kWh.",
             "benchmark_note": "Historical test outputs are exploratory: the test partition was inspected before a later validation-objective correction."
         }
