@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hvac-live-dashboard
-    command: ["python", "dashboard/dashboard_server.py"]
+    command: ["python", "src/dashboard_server.py"]
     init: true
     ports:
       - "8051:8051"
