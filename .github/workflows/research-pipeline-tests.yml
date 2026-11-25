@@ -24,5 +24,17 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Compile dashboard server
         run: python -m py_compile dashboard/dashboard_server.py
+      - name: Check dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("dashboard/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          if not scripts:
+              raise SystemExit("No inline dashboard script found")
+          Path("/tmp/dashboard.js").write_text("\\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/dashboard.js
       - name: Run invariant tests
         run: pytest -q
