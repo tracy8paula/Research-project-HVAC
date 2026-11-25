@@ -33,7 +33,7 @@ PROCESSED = OUTPUT / "processed"
 MODELS = OUTPUT / "models"
 METRICS = OUTPUT / "metrics"
 DASHBOARD = ROOT / "dashboard"
-PORT = 8050
+PORT = 8051
 
 class ReplayEngine:
     def __init__(self):
