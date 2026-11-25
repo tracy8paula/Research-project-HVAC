@@ -22,5 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
+      - name: Compile dashboard server
+        run: python -m py_compile dashboard/dashboard_server.py
       - name: Run invariant tests
         run: pytest -q
