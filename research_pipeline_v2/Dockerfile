@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+EXPOSE 8051
+
 COPY requirements.txt /app/requirements.txt
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
