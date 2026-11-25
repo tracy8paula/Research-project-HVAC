@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+EXPOSE 8051
+
 COPY requirements.txt /app/requirements.txt
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
@@ -17,6 +19,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 
 COPY config/ /app/config/
 COPY src/ /app/src/
+COPY dashboard/ /app/dashboard/
 
 RUN mkdir -p /app/data/raw /app/outputs/processed /app/outputs/models /app/outputs/metrics /app/outputs/figures /app/outputs/logs
 

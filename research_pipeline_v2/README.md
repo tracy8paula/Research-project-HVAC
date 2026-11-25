@@ -1,94 +1,84 @@
-# Research Pipeline V2
+# Short-Horizon Indoor CO2 and Temperature Forecasting for HVAC Decision Support
 
-This is a separate research implementation for:
+Research code for an experimental forecasting study using Building 59 indoor-environment observations. It explores methods that may inform predictive ventilation/HVAC decisions in Ugandan building contexts.
 
-**A Quantum-Inspired Edge AI Framework for Energy-Aware Indoor Air Quality and HVAC Control in Ugandan Buildings.**
+> **Status:** experimental prototype, not a validated Ugandan deployment. Synthetic scenarios are not Ugandan measurements. The control simulation is not a commissioned HVAC controller or proof of energy savings.
 
-It is isolated under `research_pipeline_v2/` on branch `research-pipeline-v2`. Existing project files and earlier commits are not replaced.
+## Research question
+Can short-horizon models forecast indoor CO2 and temperature, and can these forecasts provide useful evidence for future ventilation/HVAC decision support in building contexts relevant to Uganda?
 
-## Source data
+## Implemented
+- Two-stream CO2 and temperature data preparation, QC and timestamp alignment.
+- Chronological 70/15/15 split and continuous-segment-aware forecast windows.
+- Training-only scaling and validation-based model selection.
+- Persistence and aggregate LSTM baselines.
+- Sensor-level sine/cosine spatial feature encoding using a **virtual assumed grid**.
+- QPSO hyperparameter search (a classical quantum-behaved optimisation heuristic; no quantum computer or quantum advantage).
+- Five synthetic Uganda-context scenarios generated from training-partition information.
+- Scenario sensitivity and occupancy/ventilation interaction analyses.
+- Offline rule-based ventilation simulation with a dimensionless fan-energy proxy.
+- Read-only data integrity/leakage audit and CPU-compatible Docker packaging.
+- Static dashboard of saved outputs (not live model inference).
 
-The pipeline uses only:
+## Current experiment definition
+- Inputs: 12 ten-minute observations (120 minutes of history).
+- Targets: indoor CO2 (ppm) and temperature (°C).
+- Forecast: three ten-minute steps = **30 minutes ahead**, not five minutes.
+- Chronological split: 70/15/15.
+- Scalers fit on training only; QPSO fitness uses validation only.
+- The historical test partition was inspected before a later validation-objective correction. It must not be represented as a fresh blind test.
 
-1. `data/raw/zone_co2.csv`
-2. `data/raw/zone_temp_interior.csv`
+Recorded preparation run: 11 CO2 and 16 temperature sensors, 54,893 aligned ten-minute rows, four continuous segments; partitions 38,425/8,234/8,234 rows. The recorded audit reported 32/32 checks passing. These historical values must be rechecked by rerunning against the exact authorised inputs; generated outputs are not committed.
 
-Humidity is excluded. No other Building 59 folder or CSV is required.
+## Run locally
+Place the authorised source files at `data/raw/zone_co2.csv` and `data/raw/zone_temp_interior.csv`. Do not commit raw data without permission.
 
-Do not upload the raw research CSVs to GitHub. Keep them locally on the Windows PC.
-
-## Windows preparation
-
-1. Clone or switch to the `research-pipeline-v2` branch.
-2. Copy the two CSV files into `research_pipeline_v2/data/raw/`.
-3. Open PowerShell in the `research_pipeline_v2` directory.
-4. Activate the existing Conda environment:
-
-```powershell
-conda activate ML_CLASS
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install torch==2.5.1
+python src/check_environment.py
+python src/run_pipeline.py
 ```
 
-5. Run the non-mutating environment check:
-
-```powershell
-python .\src\check_environment.py
+Run fast invariant tests:
+```bash
+python -m pip install -r requirements-dev.txt
+pytest -q
 ```
 
-6. Run the Windows folder and input-file check:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\setup_windows.ps1
+Docker:
+```bash
+docker compose build
+docker compose run --rm research-pipeline
 ```
 
-7. If the environment check passes and both CSVs are found, prepare the two streams:
+## Scientific limitations
+1. Source measurements are Building 59 data, not Ugandan building measurements.
+2. Synthetic Uganda-context scenarios use assumed occupancy, room volume, outdoor CO2 and air-change rates.
+3. Spatial coordinates are virtual assumptions, not measured sensor locations or floor-plan geometry.
+4. Fan energy is represented by a dimensionless cubic proxy, not kWh or a calibrated HVAC power model.
+5. Current ventilation simulation is rule-based, not learned predictive control or physical equipment testing.
+6. The control simulation does not model thermal dynamics, comfort, heating/cooling loads or whole-building energy.
+7. Docker CPU execution is packaging, not embedded-device deployment or edge hardware benchmarking.
+8. Historical test outputs are pre-correction exploratory evidence, not a fresh blind test.
 
-```powershell
-python .\src\prepare_data.py
+See [Research Status](docs/RESEARCH_STATUS_AND_LIMITATIONS.md), [Experiment Protocol](docs/EXPERIMENT_PROTOCOL.md) and [Reproducibility Checklist](docs/REPRODUCIBILITY_CHECKLIST.md).
+
+## Defensible current claim
+A leakage-aware experimental pipeline has been implemented to compare short-horizon indoor CO2/temperature forecasting methods on Building 59 observations and explore explicitly synthetic Uganda-context scenarios. Local Ugandan building performance, real energy savings, health outcomes, quantum advantage and physical HVAC deployment have **not** been established.
+
+
+## Interactive live-replay dashboard
+
+An interactive dashboard prototype is now included under `dashboard/`. It replays recorded Building 59 observations as an accelerated incoming stream, calls the saved validation-selected aggregate LSTM on a rolling 120-minute input window, shows 10/20/30-minute forecasts, and updates forecast error when the replay reaches the corresponding recorded 30-minute outcome. It also displays model comparison, synthetic Uganda-context scenarios and offline ventilation-control summaries.
+
+Start from this directory:
+```bash
+docker compose -f docker-compose.dashboard.yml up --build
 ```
+Then open http://localhost:8051.
 
-The setup and environment-check scripts do not install, remove or upgrade packages. Do not install dependencies blindly; first inspect the environment-check output.
-
-## Data preparation
-
-The current preparation script:
-- validates timestamp columns and discovers sensor columns from the actual naming patterns;
-- converts invalid timestamps and out-of-range sensor readings into missing values;
-- uses per-sensor median aggregation for duplicate timestamps;
-- resamples the CO₂ and temperature streams independently to 10-minute bins;
-- interpolates only short internal gaps (up to two bins);
-- aligns the two modalities by timestamp;
-- retains sensor-level panels for the later spatial feature experiment;
-- marks long discontinuities as separate time segments so forecast windows cannot bridge them;
-- saves a JSON quality report.
-
-The broad QC bounds currently configured are 250–2000 ppm for CO₂ and 10–40 °C for indoor temperature. These are data-quality filters, not health or comfort thresholds. The report records how many values are removed by these bounds so the decision can be reviewed.
-
-## Methodological safeguards for the complete study
-
-- Chronological 70/15/15 train/validation/test partitions.
-- Scalers and learned transformations fitted on training data only.
-- Uganda-context scenarios are synthetic modelling scenarios, never measured Ugandan observations.
-- Uganda scenarios are generated from training-partition information and evaluated separately.
-- No humidity, PM2.5 or PM10 values are invented.
-- The virtual spatial layout is a documented assumption, not a measured floor plan or verified sensor map.
-- QPSO uses validation performance only; the held-out test partition is reserved for final evaluation.
-- Edge latency results from the Windows PC are labelled as local CPU benchmarks, not physical embedded-device measurements.
-
-## Current implementation status
-
-Available now:
-- Windows configuration;
-- input/output folder setup;
-- non-mutating environment diagnostic;
-- two-file timestamp-safe data preparation and quality reporting.
-
-Still to be implemented and validated before the full research run:
-- training-only spatial sine/cosine feature construction using a documented virtual sensor layout;
-- Uganda-context mass-balance scenario generation;
-- chronological split and leakage-safe scaling integration;
-- persistence and LSTM baselines;
-- QPSO hyperparameter search;
-- ablation experiments, final held-out test evaluation and edge benchmark.
-
-Do not treat this branch as the complete research pipeline until those remaining modules and their integration tests are in place.
+The dashboard is explicitly a recorded-data replay, not a physical sensor connection. It requires the existing local `outputs/` artefacts and mounts them read-only. See [dashboard/README.md](dashboard/README.md) for the run guide and scientific boundaries.

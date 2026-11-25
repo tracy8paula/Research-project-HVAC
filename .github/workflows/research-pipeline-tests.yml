@@ -1,0 +1,40 @@
+name: Research pipeline invariant tests
+on:
+  push:
+    branches: [research-pipeline-v2, research-quality-upgrade-20261125]
+  pull_request:
+    branches: [research-pipeline-v2, main]
+  workflow_dispatch:
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: research_pipeline_v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: research_pipeline_v2/requirements-dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Compile dashboard server
+        run: python -m py_compile dashboard/dashboard_server.py
+      - name: Check dashboard JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("dashboard/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+          if not scripts:
+              raise SystemExit("No inline dashboard script found")
+          Path("/tmp/dashboard.js").write_text("\\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/dashboard.js
+      - name: Run invariant tests
+        run: pytest -q

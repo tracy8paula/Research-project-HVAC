@@ -1,0 +1,20 @@
+services:
+  hvac-live-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hvac-live-dashboard
+    command: ["python", "src/dashboard_server.py"]
+    init: true
+    ports:
+      - "8051:8051"
+    volumes:
+      - ./outputs:/app/outputs:ro
+    environment:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      PYTHONUNBUFFERED: "1"
+    cpus: 2.0
+    mem_limit: 2g
+    restart: unless-stopped
