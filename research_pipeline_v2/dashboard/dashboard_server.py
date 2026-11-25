@@ -209,7 +209,12 @@ class ReplayEngine:
             "benchmark": read_csv("final_held_out_test_comparison.csv"),
             "scenarios": read_csv("uganda_scenario_summary.csv"),
             "control": read_csv("uganda_rule_based_control_summary.csv"),
-            "scenario_audit": read_json("uganda_sensitivity_analysis.json"),
+            "qpso_search": read_csv("qpso_search_history.csv"),
+            "factorial": read_csv("uganda_occupancy_ventilation_factorial.csv"),
+            "temperature_sensitivity": read_csv("uganda_temperature_offset_sensitivity.csv"),
+            "sensitivity": read_json("uganda_sensitivity_analysis.json"),
+            "interaction": read_json("uganda_occupancy_ventilation_interaction.json"),
+            "integrity": read_json("data_integrity_audit.json"),
             "control_note": "Offline rule-based simulation. Fan-energy is a dimensionless proxy, not measured kWh.",
             "benchmark_note": "Historical test outputs are exploratory: the test partition was inspected before a later validation-objective correction."
         }
