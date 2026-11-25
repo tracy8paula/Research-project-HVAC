@@ -79,6 +79,6 @@ Start from this directory:
 ```bash
 docker compose -f docker-compose.dashboard.yml up --build
 ```
-Then open http://localhost:8050.
+Then open http://localhost:8051.
 
 The dashboard is explicitly a recorded-data replay, not a physical sensor connection. It requires the existing local `outputs/` artefacts and mounts them read-only. See [dashboard/README.md](dashboard/README.md) for the run guide and scientific boundaries.
