@@ -1,0 +1,15 @@
+# Private/raw research inputs
+data/raw/*.csv
+!data/raw/README.md
+
+# Generated datasets, models, metrics, logs and figures
+outputs/
+*.pth
+*.pt
+*.onnx
+*.pkl
+*.joblib
+__pycache__/
+*.py[cod]
+.venv/
+venv/

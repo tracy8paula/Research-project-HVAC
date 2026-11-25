@@ -1,0 +1,19 @@
+services:
+  research-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hvac-research-pipeline
+    init: true
+    environment:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "2"
+      NUMEXPR_NUM_THREADS: "2"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./outputs:/app/outputs
+    cpus: 2.0
+    mem_limit: 4g
+    restart: "no"
