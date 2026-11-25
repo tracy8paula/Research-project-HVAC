@@ -10,7 +10,7 @@ From `research_pipeline_v2`:
 docker compose -f docker-compose.dashboard.yml up --build
 ```
 
-Open http://localhost:8051
+Open http://localhost:8051 (the server and Docker container both listen on port 8051).
 
 The dashboard container mounts the local `outputs/` directory read-only. It expects:
 
