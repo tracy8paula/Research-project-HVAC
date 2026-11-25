@@ -69,3 +69,16 @@ See [Research Status](docs/RESEARCH_STATUS_AND_LIMITATIONS.md), [Experiment Prot
 
 ## Defensible current claim
 A leakage-aware experimental pipeline has been implemented to compare short-horizon indoor CO2/temperature forecasting methods on Building 59 observations and explore explicitly synthetic Uganda-context scenarios. Local Ugandan building performance, real energy savings, health outcomes, quantum advantage and physical HVAC deployment have **not** been established.
+
+
+## Interactive live-replay dashboard
+
+An interactive dashboard prototype is now included under `dashboard/`. It replays recorded Building 59 observations as an accelerated incoming stream, calls the saved validation-selected aggregate LSTM on a rolling 120-minute input window, shows 10/20/30-minute forecasts, and updates forecast error when the replay reaches the corresponding recorded 30-minute outcome. It also displays model comparison, synthetic Uganda-context scenarios and offline ventilation-control summaries.
+
+Start from this directory:
+```bash
+docker compose -f docker-compose.dashboard.yml up --build
+```
+Then open http://localhost:8050.
+
+The dashboard is explicitly a recorded-data replay, not a physical sensor connection. It requires the existing local `outputs/` artefacts and mounts them read-only. See [dashboard/README.md](dashboard/README.md) for the run guide and scientific boundaries.
