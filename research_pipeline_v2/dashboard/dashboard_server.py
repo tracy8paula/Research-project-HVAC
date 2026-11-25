@@ -68,6 +68,7 @@ class ReplayEngine:
         self.last_prediction = None
         self.source_label = "Recorded Building 59 observations — accelerated replay"
         self.scenario = "baseline_naturally_ventilated"
+        self._snapshot()
 
     def _valid_segment_starts(self):
         # Vectorised continuity check: avoid repeatedly slicing a DataFrame
@@ -211,6 +212,7 @@ class ReplayEngine:
             "control": read_csv("uganda_rule_based_control_summary.csv"),
             "qpso_search": read_csv("qpso_search_history.csv"),
             "factorial": read_csv("uganda_occupancy_ventilation_factorial.csv"),
+            "assumption_sensitivity": read_csv("uganda_assumption_sensitivity.csv"),
             "temperature_sensitivity": read_csv("uganda_temperature_offset_sensitivity.csv"),
             "sensitivity": read_json("uganda_sensitivity_analysis.json"),
             "interaction": read_json("uganda_occupancy_ventilation_interaction.json"),
