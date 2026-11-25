@@ -7,7 +7,7 @@ services:
     command: ["python", "dashboard/dashboard_server.py"]
     init: true
     ports:
-      - "8051:8050"
+      - "8051:8051"
     volumes:
       - ./outputs:/app/outputs:ro
     environment:
